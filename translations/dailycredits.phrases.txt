@@ -57,6 +57,14 @@
 	"WaitForInterval"
 	{
 		"#format"	"{1:i}"
-		"en"		"{teamcolor}[Store]{default} You need to play on the server for {green}{1} more minutes{default} to be able to receive your daily credits!"
+		"en"		"{teamcolor}[Store]{default} You need to play for {green}{1} more minutes{default} to be able to receive your daily credits!"
+		"de"		"{teamcolor}[Store]{default} Du musst noch {green}{1} weitere Minuten{default} spielen um deine täglichen Credits zu erhalten!"
+	}	
+	
+	"WaitForIntervalOneMinute"
+	{
+		"#format"	"{1:i}"
+		"en"		"{teamcolor}[Store]{default} You need to play for {green}1 more minute{default} to be able to receive your daily credits!"
+		"de"		"{teamcolor}[Store]{default} Du musst noch {green}1 weitere Minute{default} spielen, um deine täglichen Credits zu erhalten!"
 	}	
 }

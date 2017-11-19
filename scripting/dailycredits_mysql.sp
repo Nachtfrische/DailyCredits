@@ -1,7 +1,7 @@
 #pragma semicolon 1
 
-#define PLUGIN_AUTHOR "Simon -edit by Nachtfrische"
-#define PLUGIN_VERSION "2.2"
+#define PLUGIN_AUTHOR "Simon & Nachtfrische"
+#define PLUGIN_VERSION "2.3"
 
 #include <sourcemod>
 #include <sdktools>
@@ -49,11 +49,25 @@ public void OnPluginStart()
 public void OnClientConnected(int client)
 {
 	ConnectTime[client] = GetTime();
+	UpdateConnectTime(client);
 }
 
 public void OnClientDisconnect(int client)
 {
 	ConnectTime[client] = 0;
+}
+
+public void printIntervalMessage(int client, int timeTillNow)
+{
+	int timeLeft = GetConVarInt(g_hDailyInterval) - timeTillNow;
+	if (timeLeft == 0 || timeLeft == 1)
+	{
+		CPrintToChatEx(client, client, "%t", "WaitForIntervalOneMinute", GetConVarInt(g_hDailyInterval) - timeTillNow);
+	}
+	else
+	{
+		CPrintToChatEx(client, client, "%t", "WaitForInterval", GetConVarInt(g_hDailyInterval) - timeTillNow);
+	}
 }
 
 public void InitializeDB()
@@ -65,24 +79,15 @@ public void InitializeDB()
 	{
 		SetFailState(Error);
 	}
-	SQL_TQuery(db, SQLErrorCheckCallback, "CREATE TABLE IF NOT EXISTS players (steam_id VARCHAR(20) UNIQUE, last_connect INT(12), bonus_amount INT(12));");
+	SQL_TQuery(db, SQLErrorCheckCallback, "CREATE TABLE IF NOT EXISTS players (steam_id VARCHAR(20) UNIQUE, last_connect INT(12), bonus_amount INT(12), connectedAt INT(10));");
 }
 
 public Action Cmd_Daily(int client, int args)
 {
-	if (!GetConVarBool(g_hDailyEnable)) return Plugin_Handled;
-	if (!IsValidClient(client)) return Plugin_Handled;
-	if (GetConVarInt(g_hDailyInterval) > 0)
-	{
-		int TimeTillNow = 0;
-		TimeTillNow = RoundToFloor(float((GetTime() - ConnectTime[client]) / 60));
-		if (TimeTillNow < GetConVarInt(g_hDailyInterval))
-		{
-			CPrintToChatEx(client, client, "%t", "WaitForInterval", GetConVarInt(g_hDailyInterval) - TimeTillNow);
-			return Plugin_Handled;
-		}
-	}
-	FormatTime(CurrentDate, sizeof(CurrentDate), "%Y%m%d"); // Save current date in variable
+	if (!GetConVarBool(g_hDailyEnable))return Plugin_Handled;
+	if (!IsValidClient(client))return Plugin_Handled;
+	FormatTime(CurrentDate, sizeof(CurrentDate), "%Y%m%d");
+	
 	char steamId[32];
 	if (GetClientAuthId(client, AuthId_Steam2, steamId, sizeof(steamId)))
 	{
@@ -95,6 +100,7 @@ public Action Cmd_Daily(int client, int args)
 		{
 			delete query;
 			GiveCredits(client, true);
+			
 		}
 		else
 		{
@@ -107,21 +113,37 @@ public Action Cmd_Daily(int client, int args)
 	return Plugin_Handled;
 }
 
+public void UpdateConnectTime(int client)
+{
+	char buffer[200];
+	char steamId[32];
+	if (GetClientAuthId(client, AuthId_Steam2, steamId, sizeof(steamId)))
+	{
+		int connectedAtSQL = ConnectTime[client];
+		Format(buffer, sizeof(buffer), "UPDATE players SET connectedAt = %i WHERE steam_id = '%s'", connectedAtSQL, steamId);
+		SQL_TQuery(db, SQLErrorCheckCallback, buffer);
+	}
+}
+
 stock void GiveCredits(int client, bool FirstTime)
 {
 	char buffer[200];
 	char steamId[32];
+	int currentTime = GetTime();
+	int intervalTimeConfig = GetConVarInt(g_hDailyInterval);
+	
 	if (GetClientAuthId(client, AuthId_Steam2, steamId, sizeof(steamId)))
 	{
 		if (FirstTime)
 		{
 			Store_SetClientCredits(client, Store_GetClientCredits(client) + GetConVarInt(g_hDailyCredits));
 			CPrintToChatEx(client, client, "%t", "CreditsRecieved", GetConVarInt(g_hDailyCredits));
-			Format(buffer, sizeof(buffer), "INSERT IGNORE INTO players (steam_id, last_connect, bonus_amount) VALUES ('%s', %d, 1)", steamId, StringToInt(CurrentDate));
+			Format(buffer, sizeof(buffer), "INSERT IGNORE INTO players (steam_id, last_connect, bonus_amount, connectedAt) VALUES ('%s', %d, 1, %d)", steamId, StringToInt(CurrentDate), currentTime);
 			SQL_TQuery(db, SQLErrorCheckCallback, buffer);
 		}
 		else
 		{
+			
 			Format(buffer, sizeof(buffer), "SELECT * FROM players WHERE steam_id = '%s'", steamId);
 			SQL_LockDatabase(db);
 			DBResultSet query = SQL_Query(db, buffer);
@@ -129,9 +151,14 @@ stock void GiveCredits(int client, bool FirstTime)
 			SQL_FetchRow(query);
 			int date2 = SQL_FetchInt(query, 1);
 			int bonus = SQL_FetchInt(query, 2);
+			int connectedAt = SQL_FetchInt(query, 3);
 			delete query;
+			
 			int date1 = StringToInt(CurrentDate);
 			int resetDaysSetting = GetConVarInt(g_hDailyReset);
+			
+			int timeTillNow = 0;
+			timeTillNow = RoundToFloor(float((GetTime() - connectedAt) / 60));
 			
 			if (resetDaysSetting > 0) {  //needed since after the reset, bonus starts at 0
 				resetDaysSetting--;
@@ -140,17 +167,26 @@ stock void GiveCredits(int client, bool FirstTime)
 			//streak is currently continuing
 			if ((date1 - date2) == 1)
 			{
-				int TotalCredits = GetConVarInt(g_hDailyCredits) + (bonus * GetConVarInt(g_hDailyBonus)); //bonus can't start at 1, since the first day would get the player a bonus as well
-				if (TotalCredits > GetConVarInt(g_hDailyMax))TotalCredits = GetConVarInt(g_hDailyMax);
-				Store_SetClientCredits(client, Store_GetClientCredits(client) + TotalCredits);
-				
-				if (resetDaysSetting != 0)
+				if (intervalTimeConfig < timeTillNow)
 				{
-					if (bonus >= resetDaysSetting)
+					int TotalCredits = GetConVarInt(g_hDailyCredits) + (bonus * GetConVarInt(g_hDailyBonus)); //bonus can't start at 1, since the first day would get the player a bonus as well
+					if (TotalCredits > GetConVarInt(g_hDailyMax))TotalCredits = GetConVarInt(g_hDailyMax);
+					Store_SetClientCredits(client, Store_GetClientCredits(client) + TotalCredits);
+					
+					if (resetDaysSetting != 0)
 					{
-						CPrintToChatEx(client, client, "%t", "LastCreditsRecieved", TotalCredits);
-						Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = %i WHERE steam_id = '%s'", date1, 0, steamId);
-						CPrintToChatEx(client, client, "%t", "ResetDays", resetDaysSetting + 1);
+						if (bonus >= resetDaysSetting)
+						{
+							CPrintToChatEx(client, client, "%t", "LastCreditsRecieved", TotalCredits);
+							Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = %i WHERE steam_id = '%s'", date1, 0, steamId);
+							CPrintToChatEx(client, client, "%t", "ResetDays", resetDaysSetting + 1);
+						}
+						else
+						{
+							CPrintToChatEx(client, client, "%t", "CreditsRecieved", TotalCredits);
+							Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = %i WHERE steam_id = '%s'", date1, bonus + 1, steamId);
+							CPrintToChatEx(client, client, "%t", "CurrentDay", bonus + 1);
+						}
 					}
 					else
 					{
@@ -158,14 +194,12 @@ stock void GiveCredits(int client, bool FirstTime)
 						Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = %i WHERE steam_id = '%s'", date1, bonus + 1, steamId);
 						CPrintToChatEx(client, client, "%t", "CurrentDay", bonus + 1);
 					}
+					SQL_TQuery(db, SQLErrorCheckCallback, buffer);
 				}
 				else
 				{
-					CPrintToChatEx(client, client, "%t", "CreditsRecieved", TotalCredits);
-					Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = %i WHERE steam_id = '%s'", date1, bonus + 1, steamId);
-					CPrintToChatEx(client, client, "%t", "CurrentDay", bonus + 1);
+					printIntervalMessage(client, timeTillNow);
 				}
-				SQL_TQuery(db, SQLErrorCheckCallback, buffer);
 			}
 			//already recieved credits today
 			else if ((date1 - date2) == 0)
@@ -175,11 +209,21 @@ stock void GiveCredits(int client, bool FirstTime)
 			//streak ended
 			else if ((date1 - date2) > 1)
 			{
-				CPrintToChatEx(client, client, "%t", "StreakEnded", bonus);
-				Store_SetClientCredits(client, Store_GetClientCredits(client) + GetConVarInt(g_hDailyCredits));
-				CPrintToChatEx(client, client, "%t", "CreditsRecieved", GetConVarInt(g_hDailyCredits));
-				Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = 1 WHERE steam_id = '%s'", date1, steamId);
-				SQL_TQuery(db, SQLErrorCheckCallback, buffer);
+				if (intervalTimeConfig < timeTillNow)
+				{
+					CPrintToChatEx(client, client, "%t", "StreakEnded", bonus);
+					Store_SetClientCredits(client, Store_GetClientCredits(client) + GetConVarInt(g_hDailyCredits));
+					CPrintToChatEx(client, client, "%t", "CreditsRecieved", GetConVarInt(g_hDailyCredits));
+					Format(buffer, sizeof(buffer), "UPDATE players SET last_connect = %i, bonus_amount = 1 WHERE steam_id = '%s'", date1, steamId);
+					SQL_TQuery(db, SQLErrorCheckCallback, buffer);
+				}
+				else
+				{
+					printIntervalMessage(client, timeTillNow);
+				}
+			}
+			else {
+				printIntervalMessage(client, timeTillNow);
 			}
 		}
 	}
